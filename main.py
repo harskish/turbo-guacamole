@@ -11,6 +11,7 @@ class State(ParamContainer):
     cr: Param = FloatParam('C_real', -0.744, -2, 2)
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
+    invert: Param = BoolParam('Inverted drawing', True)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -28,7 +29,8 @@ class Viewer(AutoUIViewer):
         self.posy = np.repeat(np.arange(0, self.state.H, dtype=np.int32), self.state.W) # 0000-1111-2222...
         self.z = self.posx / (self.state.W - 1) + 1j*self.posy / (self.state.H - 1) # in [ 0, 1]^2
         self.z = 4*self.z - 2*(1 + 1j) # in [-2, 2]^2
-        self.image = np.ones((self.state.H, self.state.W, 3), dtype=np.float32) * self.color_LUT()
+        self.image = np.ones((self.state.H, self.state.W, 3), dtype=np.float32)
+        self.image *=  self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
 
     def draw_toolbar(self):
         imgui.text(f'Active: {np.prod(self.z.shape)} / {np.prod(self.image.shape)}')
@@ -37,10 +39,10 @@ class Viewer(AutoUIViewer):
                 self.restart_rendering()
 
     # Lerped LUT
-    def color_LUT(self):
-        t_max = 0.6 # use part of range?
-        t_norm = self.curr_iter / self.state.max_iter
-        t = t_max * t_norm * (len(self.colormap) - 1)
+    def color_LUT(self, i):
+        t = i / self.state.max_iter
+        t *= 0.6 # use part of range?
+        t *= (len(self.colormap) - 1)
         lo = int(np.floor(t))
         hi = int(np.ceil(t))
         t_fract = t - lo
@@ -58,6 +60,7 @@ class Viewer(AutoUIViewer):
         cr: float,
         ci: float,
         max_iter: int,
+        invert: bool,
     ):
         if self.curr_iter >= max_iter:
             return None # show previous image
@@ -65,8 +68,9 @@ class Viewer(AutoUIViewer):
         # Escape condition: |z| > 2
         valid = np.absolute(self.z) <= 2
 
-        # Add colors of escaped elements
-        self.image[self.posy[valid], self.posx[valid], :] = self.color_LUT()
+        # Keep updating colors of non-escaped elements
+        idx = ~valid if invert else valid
+        self.image[self.posy[idx], self.posx[idx], :] = self.color_LUT(self.curr_iter)
 
         # Compact arrays
         self.z = self.z[valid]
