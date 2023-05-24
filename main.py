@@ -9,8 +9,8 @@ dev = 'cuda'
 
 @strict_dataclass
 class State(ParamContainer):
-    W: Param = EnumSliderParam('W', 8, [8, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
-    H: Param = EnumSliderParam('H', 8, [8, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    W: Param = EnumSliderParam('W', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    H: Param = EnumSliderParam('H', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
     cr: Param = FloatParam('C_real', -0.744, -2, 2)
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
