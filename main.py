@@ -1,13 +1,16 @@
 from pyviewer.toolbar_viewer import AutoUIViewer
 from pyviewer.params import *
 import numpy as np
+import torch
 import matplotlib.cm
 from multiprocessing import Lock
 
+dev = 'cuda'
+
 @strict_dataclass
 class State(ParamContainer):
-    W: Param = EnumSliderParam('W', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
-    H: Param = EnumSliderParam('H', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    W: Param = EnumSliderParam('W', 8, [8, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    H: Param = EnumSliderParam('H', 8, [8, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
     cr: Param = FloatParam('C_real', -0.744, -2, 2)
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
@@ -18,19 +21,19 @@ class Viewer(AutoUIViewer):
         self.state_lock = Lock()
         self.state = State()
         self.state_last = None
-        self.colormap = np.array(matplotlib.cm.get_cmap("twilight").colors)
+        self.colormap = torch.tensor(matplotlib.cm.get_cmap("twilight").colors, device=dev)
         self.restart_rendering()
 
     def restart_rendering(self):
         # SoA-style data
         # Will be compacted as tasks finish
         self.curr_iter = 0
-        self.posx = np.tile(np.arange(0, self.state.W, dtype=np.int32), self.state.H)   # 0123-0123-0123...
-        self.posy = np.repeat(np.arange(0, self.state.H, dtype=np.int32), self.state.W) # 0000-1111-2222...
+        self.posx = torch.arange(0, self.state.W, dtype=torch.int64, device=dev).tile(self.state.H)   # 0123-0123-0123...
+        self.posy = torch.arange(0, self.state.H, dtype=torch.int64, device=dev).repeat_interleave(self.state.W) # 0000-1111-2222...
         self.z = self.posx / (self.state.W - 1) + 1j*self.posy / (self.state.H - 1) # in [ 0, 1]^2
         self.z = 4*self.z - 2*(1 + 1j) # in [-2, 2]^2
-        self.image = np.ones((self.state.H, self.state.W, 3), dtype=np.float32)
-        self.image *=  self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
+        self.image = torch.ones((self.state.H, self.state.W, 3), dtype=torch.float32, device=dev)
+        self.image *= self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
 
     def draw_toolbar(self):
         imgui.text(f'Active: {np.prod(self.z.shape)} / {np.prod(self.image.shape)}')
@@ -66,7 +69,7 @@ class Viewer(AutoUIViewer):
             return None # show previous image
         
         # Escape condition: |z| > 2
-        valid = np.absolute(self.z) <= 2
+        valid = torch.absolute(self.z) <= 2
 
         # Keep updating colors of non-escaped elements
         idx = ~valid if invert else valid
