@@ -14,16 +14,26 @@ for cmap in matplotlib.pyplot.colormaps():
     if hasattr(matplotlib.cm.get_cmap(cmap), 'colors'):
         valid_cmaps.append(cmap)
 
+# cr, ci, max_iter, [sx, sy, tx, ty], tmin, tmax, tpow, cmap
+presets = [
+    (-0.7540, -0.1030, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.7780, 0.1480, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.7440, 0.1480, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.8460, -0.2170, 200, [0.121, 0.121, -0.049, 0.223], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.5370, -0.5260, 140, [0.087, 0.087, -0.062, 0.096], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+]
+
 @strict_dataclass
 class State(ParamContainer):
     res: Param = EnumSliderParam('Resolution scale', 0.75,
         [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0])
-    cr: Param = FloatParam('C_real', -0.754, -2, 2) # -0.778, -0.744, -0.846, -0.537
-    ci: Param = FloatParam('C_imag', -0.103, -2, 2) #  0.148,  0.148, -0.217, -0.526
+    cr: Param = FloatParam('C_real', -0.537, -2, 2)
+    ci: Param = FloatParam('C_imag', -0.526, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 140, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
     cmap: Param = EnumParam('Palette', 'twilight_shifted_r', sorted(valid_cmaps))
     cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
+    tpow: Param = FloatParam('Palette exponent', 1.0, 0.1, 10.0)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -34,6 +44,7 @@ class Viewer(AutoUIViewer):
         self.restart_rendering()
 
     def restart_rendering(self):
+        self.state_lock.acquire()
         W, H = ((self.output_pos_br - self.output_pos_tl) * self.state.res).astype(np.int32)
         S = np.diag([1.7, 1.7, 1]) # initial scale
         A = np.diag([1, H/W, 1]) # aspect ratio correction
@@ -54,17 +65,46 @@ class Viewer(AutoUIViewer):
         self.zi = cnv_tl[1] + cnv_h * self.posy / (H - 1)
         self.image = torch.ones((H, W, 3), dtype=torch.float32, device=dev)
         self.image *= self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
+        self.state_lock.release()
 
     def draw_toolbar(self):
         imgui.text(f'Alive: {100*np.prod(self.zr.shape)/np.prod(self.image.shape[:2]):.2f}%')
         if imgui.button('Restart'):
-            with self.state_lock:
-                self.restart_rendering()
+            self.restart_rendering()
+
+    def export_preset(self):
+        s = self.state
+        sx, sy, tx, ty = self.curr_xform.reshape(-1)[np.array([0, 4, 2, 5])]
+        print(f'({s.cr:.4f}, {s.ci:.4f}, {s.max_iter}, [{sx:.3f}, {sy:.3f}, {tx:.3f}, {ty:.3f}], ({s.cran[0]}, {s.cran[1]}), {s.tpow}, "{s.cmap}"),')
+
+    def load_preset(self, preset):
+        s = self.state
+        s.cr, s.ci, s.max_iter = preset[0:3]
+        sx, sy, tx, ty = preset[3]
+        self.curr_xform = np.array([sx, 0, tx, 0, sy, ty, 0, 0, 1]).reshape(3, 3)
+        s.cran = preset[4]
+        s.tpow = preset[5]
+        s.cmap = preset[6]
+
+    def draw_menu(self):
+        with imgui.begin_menu('Presets', True) as file_menu:
+            if file_menu.opened:
+                if imgui.menu_item('Export', shortcut=None, selected=False, enabled=True)[0]:
+                    self.export_preset()
+
+                # submenu
+                with imgui.begin_menu('Load', True) as open_recent_menu:
+                    if open_recent_menu.opened:
+                        for i, preset in enumerate(presets):
+                            if imgui.menu_item(f'Preset {i+1}', None, False, True)[0]:
+                                self.load_preset(preset)
+                                self.restart_rendering()
 
     # Lerped LUT
     def color_LUT(self, i):
         tmin, tmax = self.state.cran
         t = i / self.state.max_iter
+        t = t ** self.state.tpow
         t = tmin + t * (tmax - tmin) # use part of range?
         t *= (len(self.colormap) - 1)
         lo = int(np.floor(t))
