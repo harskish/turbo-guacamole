@@ -2,6 +2,7 @@ from pyviewer.toolbar_viewer import AutoUIViewer
 from pyviewer.params import *
 import numpy as np
 import torch
+import matplotlib.pyplot
 import matplotlib.cm
 from multiprocessing import Lock
 
@@ -11,27 +12,33 @@ if torch.backends.mps.is_available():
 if torch.cuda.is_available():
     dev = 'cuda'
 
+valid_cmaps = []
+for cmap in matplotlib.pyplot.colormaps():
+    if hasattr(matplotlib.cm.get_cmap(cmap), 'colors'):
+        valid_cmaps.append(cmap)
+
 @strict_dataclass
 class State(ParamContainer):
-    W: Param = EnumSliderParam('W', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
-    H: Param = EnumSliderParam('H', 1024, [64, 128, 256, 512, 1024, 2048, 4096, 8192])
+    W: Param = EnumSliderParam('W', 1024, [128, 512, 1024, 2048, 3072, 4096, 8192])
+    H: Param = EnumSliderParam('H', 1024, [128, 512, 1024, 2048, 3072, 4096, 8192])
     cr: Param = FloatParam('C_real', -0.744, -2, 2)
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
+    cmap: Param = EnumParam('Palette', 'twilight', valid_cmaps)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
         self.state_lock = Lock()
         self.state = State()
         self.state_last = None
-        self.colormap = torch.tensor(matplotlib.cm.get_cmap("twilight").colors, device=dev)
         self.restart_rendering()
 
     def restart_rendering(self):
         # SoA-style data
         # Will be compacted as tasks finish
         self.curr_iter = 0
+        self.colormap = torch.tensor(matplotlib.cm.get_cmap(self.state.cmap).colors, device=dev)
         self.posx = torch.arange(0, self.state.W, dtype=torch.int64, device=dev).tile(self.state.H)   # 0123-0123-0123...
         self.posy = torch.arange(0, self.state.H, dtype=torch.int64, device=dev).repeat_interleave(self.state.W) # 0000-1111-2222...
         self.zr = -2 + 4*self.posx / (self.state.W - 1) # in [-2, 2]^2
@@ -68,6 +75,7 @@ class Viewer(AutoUIViewer):
         ci: float,
         max_iter: int,
         invert: bool,
+        cmap: str,
     ):
         if self.curr_iter >= max_iter:
             return None # show previous image
