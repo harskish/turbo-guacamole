@@ -18,11 +18,11 @@ for cmap in matplotlib.pyplot.colormaps():
 class State(ParamContainer):
     res: Param = EnumSliderParam('Resolution scale', 0.75,
         [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0])
-    cr: Param = FloatParam('C_real', -0.744, -2, 2) # -0.778
-    ci: Param = FloatParam('C_imag',  0.148, -2, 2)
-    max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
+    cr: Param = FloatParam('C_real', -0.754, -2, 2) # -0.778, -0.744, -0.846, -0.537
+    ci: Param = FloatParam('C_imag', -0.103, -2, 2) #  0.148,  0.148, -0.217, -0.526
+    max_iter: Param = IntParam('Iteration limit', 140, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
-    cmap: Param = EnumParam('Palette', 'twilight', sorted(valid_cmaps))
+    cmap: Param = EnumParam('Palette', 'twilight_shifted_r', sorted(valid_cmaps))
     cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
 
 class Viewer(AutoUIViewer):
