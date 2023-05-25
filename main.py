@@ -5,7 +5,11 @@ import torch
 import matplotlib.cm
 from multiprocessing import Lock
 
-dev = 'cuda'
+dev = 'cpu'
+if torch.backends.mps.is_available():
+    dev = 'mps'
+if torch.cuda.is_available():
+    dev = 'cuda'
 
 @strict_dataclass
 class State(ParamContainer):
@@ -30,13 +34,13 @@ class Viewer(AutoUIViewer):
         self.curr_iter = 0
         self.posx = torch.arange(0, self.state.W, dtype=torch.int64, device=dev).tile(self.state.H)   # 0123-0123-0123...
         self.posy = torch.arange(0, self.state.H, dtype=torch.int64, device=dev).repeat_interleave(self.state.W) # 0000-1111-2222...
-        self.z = self.posx / (self.state.W - 1) + 1j*self.posy / (self.state.H - 1) # in [ 0, 1]^2
-        self.z = 4*self.z - 2*(1 + 1j) # in [-2, 2]^2
+        self.zr = -2 + 4*self.posx / (self.state.W - 1) # in [-2, 2]^2
+        self.zi = -2 + 4*self.posy / (self.state.H - 1) # in [-2, 2]^2
         self.image = torch.ones((self.state.H, self.state.W, 3), dtype=torch.float32, device=dev)
         self.image *= self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
 
     def draw_toolbar(self):
-        imgui.text(f'Active: {np.prod(self.z.shape)} / {np.prod(self.image.shape)}')
+        imgui.text(f'Active: {np.prod(self.zr.shape)} / {np.prod(self.image.shape)}')
         if imgui.button('Restart'):
             with self.state_lock:
                 self.restart_rendering()
@@ -69,19 +73,23 @@ class Viewer(AutoUIViewer):
             return None # show previous image
         
         # Escape condition: |z| > 2
-        valid = torch.absolute(self.z) <= 2
+        valid = (self.zr**2 + self.zi**2) <= 4
 
         # Keep updating colors of non-escaped elements
         idx = ~valid if invert else valid
         self.image[self.posy[idx], self.posx[idx], :] = self.color_LUT(self.curr_iter)
 
         # Compact arrays
-        self.z = self.z[valid]
+        self.zr = self.zr[valid]
+        self.zi = self.zi[valid]
         self.posx = self.posx[valid]
         self.posy = self.posy[valid]
 
         # Update zs
-        self.z = self.z**2 + (cr+ci*1j)
+        re = self.zr**2 - self.zi**2  # re(z^2)
+        im = 2 * self.zr * self.zi    # im(z^2)
+        self.zr = re + cr
+        self.zi = im + ci
 
         # Update iteration counter
         self.curr_iter += 1
