@@ -6,11 +6,8 @@ import matplotlib.pyplot
 import matplotlib.cm
 from multiprocessing import Lock
 
-dev = 'cpu'
-if torch.backends.mps.is_available():
-    dev = 'mps'
-if torch.cuda.is_available():
-    dev = 'cuda'
+# MPS works poorly atm
+dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 valid_cmaps = []
 for cmap in matplotlib.pyplot.colormaps():
@@ -25,7 +22,7 @@ class State(ParamContainer):
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
-    cmap: Param = EnumParam('Palette', 'twilight', valid_cmaps)
+    cmap: Param = EnumParam('Palette', 'twilight', sorted(valid_cmaps))
     cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
 
 class Viewer(AutoUIViewer):
@@ -59,7 +56,7 @@ class Viewer(AutoUIViewer):
         self.image *= self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
 
     def draw_toolbar(self):
-        imgui.text(f'Active: {np.prod(self.zr.shape)} / {np.prod(self.image.shape)}')
+        imgui.text(f'Alive: {100*np.prod(self.zr.shape)/np.prod(self.image.shape[:2]):.2f}%')
         if imgui.button('Restart'):
             with self.state_lock:
                 self.restart_rendering()
