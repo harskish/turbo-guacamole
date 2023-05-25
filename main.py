@@ -1,4 +1,4 @@
-from pyviewer.toolbar_viewer import AutoUIViewer
+from pyviewer.toolbar_viewer import AutoUIViewer # pip install pyviewer
 from pyviewer.params import *
 import numpy as np
 import torch
@@ -21,11 +21,12 @@ for cmap in matplotlib.pyplot.colormaps():
 class State(ParamContainer):
     W: Param = EnumSliderParam('W', 1024, [128, 512, 1024, 2048, 3072, 4096, 8192])
     H: Param = EnumSliderParam('H', 1024, [128, 512, 1024, 2048, 3072, 4096, 8192])
-    cr: Param = FloatParam('C_real', -0.744, -2, 2)
+    cr: Param = FloatParam('C_real', -0.744, -2, 2) # -0.778
     ci: Param = FloatParam('C_imag',  0.148, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 200, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
     cmap: Param = EnumParam('Palette', 'twilight', valid_cmaps)
+    cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -54,8 +55,9 @@ class Viewer(AutoUIViewer):
 
     # Lerped LUT
     def color_LUT(self, i):
+        tmin, tmax = self.state.cran
         t = i / self.state.max_iter
-        t *= 0.6 # use part of range?
+        t = tmin + t * (tmax - tmin) # use part of range?
         t *= (len(self.colormap) - 1)
         lo = int(np.floor(t))
         hi = int(np.ceil(t))
@@ -64,27 +66,17 @@ class Viewer(AutoUIViewer):
 
     def compute(self):
         with self.state_lock:
-            params = { k: p.value for k, p in self.state }
-            return self.process(**params)
+            return self.process(self.state)
 
-    def process(
-        self,
-        W: int,
-        H: int,
-        cr: float,
-        ci: float,
-        max_iter: int,
-        invert: bool,
-        cmap: str,
-    ):
-        if self.curr_iter >= max_iter:
+    def process(self, s: State):
+        if self.curr_iter >= s.max_iter:
             return None # show previous image
         
         # Escape condition: |z| > 2
         valid = (self.zr**2 + self.zi**2) <= 4
 
         # Keep updating colors of non-escaped elements
-        idx = ~valid if invert else valid
+        idx = ~valid if s.invert else valid
         self.image[self.posy[idx], self.posx[idx], :] = self.color_LUT(self.curr_iter)
 
         # Compact arrays
@@ -96,8 +88,8 @@ class Viewer(AutoUIViewer):
         # Update zs
         re = self.zr**2 - self.zi**2  # re(z^2)
         im = 2 * self.zr * self.zi    # im(z^2)
-        self.zr = re + cr
-        self.zi = im + ci
+        self.zr = re + s.cr
+        self.zi = im + s.ci
 
         # Update iteration counter
         self.curr_iter += 1
