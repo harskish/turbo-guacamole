@@ -16,24 +16,26 @@ for cmap in matplotlib.pyplot.colormaps():
 
 # cr, ci, max_iter, [sx, sy, tx, ty], tmin, tmax, tpow, cmap
 presets = [
-    (-0.7540, -0.1030, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.5370, -0.5260, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "magma"),
+    (-0.7540, -0.1030, 250, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.3, "magma"),
     (-0.7780, 0.1480, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
     (-0.7440, 0.1480, 140, [1.000, 1.000, 0.000, 0.000], (0.0, 1.0), 1.0, "twilight_shifted_r"),
     (-0.8460, -0.2170, 200, [0.121, 0.121, -0.049, 0.223], (0.0, 1.0), 1.0, "twilight_shifted_r"),
     (-0.5370, -0.5260, 140, [0.087, 0.087, -0.062, 0.096], (0.0, 1.0), 1.0, "twilight_shifted_r"),
+    (-0.8890, -0.2220, 200, [1.001, 1.001, 0.007, -0.047], (0.0, 1.0), 0.8, "twilight_shifted_r"),
 ]
 
 @strict_dataclass
 class State(ParamContainer):
-    res: Param = EnumSliderParam('Resolution scale', 0.75,
+    res: Param = EnumSliderParam('Resolution scale', 1.0,
         [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0])
     cr: Param = FloatParam('C_real', -0.537, -2, 2)
     ci: Param = FloatParam('C_imag', -0.526, -2, 2)
     max_iter: Param = IntParam('Iteration limit', 140, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
-    cmap: Param = EnumParam('Palette', 'twilight_shifted_r', sorted(valid_cmaps))
+    cmap: Param = EnumParam('Palette', 'magma', sorted(valid_cmaps))
     cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
-    tpow: Param = FloatParam('Palette exponent', 1.0, 0.1, 10.0)
+    tpow: Param = FloatParam('Palette exponent', 1.0, 0.1, 3.0)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -75,16 +77,17 @@ class Viewer(AutoUIViewer):
     def export_preset(self):
         s = self.state
         sx, sy, tx, ty = self.curr_xform.reshape(-1)[np.array([0, 4, 2, 5])]
-        print(f'({s.cr:.4f}, {s.ci:.4f}, {s.max_iter}, [{sx:.3f}, {sy:.3f}, {tx:.3f}, {ty:.3f}], ({s.cran[0]}, {s.cran[1]}), {s.tpow}, "{s.cmap}"),')
+        print(f'({s.cr:.4f}, {s.ci:.4f}, {s.max_iter}, [{sx:.3f}, {sy:.3f}, {tx:.3f}, {ty:.3f}], ({s.cran[0]:.2f}, {s.cran[1]:.2f}), {s.tpow:.3f}, "{s.cmap}"),')
 
     def load_preset(self, preset):
-        s = self.state
-        s.cr, s.ci, s.max_iter = preset[0:3]
-        sx, sy, tx, ty = preset[3]
-        self.curr_xform = np.array([sx, 0, tx, 0, sy, ty, 0, 0, 1]).reshape(3, 3)
-        s.cran = preset[4]
-        s.tpow = preset[5]
-        s.cmap = preset[6]
+        with self.state_lock:
+            s = self.state
+            s.cr, s.ci, s.max_iter = preset[0:3]
+            sx, sy, tx, ty = preset[3]
+            self.curr_xform = np.array([sx, 0, tx, 0, sy, ty, 0, 0, 1]).reshape(3, 3)
+            s.cran = preset[4]
+            s.tpow = preset[5]
+            s.cmap = preset[6]
 
     def draw_menu(self):
         with imgui.begin_menu('Presets', True) as file_menu:
