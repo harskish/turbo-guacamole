@@ -23,14 +23,18 @@ presets = [
     (-0.8460, -0.2170, 200, [0.121, 0.121, -0.049, 0.223], (0.0, 1.0), 1.0, "twilight_shifted_r"),
     (-0.5370, -0.5260, 140, [0.087, 0.087, -0.062, 0.096], (0.0, 1.0), 1.0, "twilight_shifted_r"),
     (-0.8890, -0.2220, 200, [1.001, 1.001, 0.007, -0.047], (0.0, 1.0), 0.8, "twilight_shifted_r"),
+    (-0.7880, 0.1620, 140, [1.000, 1.000, 0.020, 0.044], (0.00, 1.00), 0.686, "twilight_shifted_r"),
+    (-0.5000, -0.5260, 600, [1.000, 1.000, 0.000, 0.000], (0.00, 1.00), 0.569, "twilight_shifted_r"),
+    (-0.5000, -0.5180, 600, [1.000, 1.000, 0.000, 0.000], (0.00, 1.00), 0.569, "twilight_shifted_r"),
+    (-0.5370, -0.5000, 218, [1.000, 1.000, 0.000, 0.000], (0.27, 1.00), 0.232, "twilight_r"),
 ]
 
 @strict_dataclass
 class State(ParamContainer):
     res: Param = EnumSliderParam('Resolution scale', 1.0,
         [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0])
-    cr: Param = FloatParam('C_real', -0.537, -2, 2)
-    ci: Param = FloatParam('C_imag', -0.526, -2, 2)
+    cr: Param = FloatParam('C_real', -0.537, -1.1, 1.1)
+    ci: Param = FloatParam('C_imag', -0.526, -1.1, 1.1)
     max_iter: Param = IntParam('Iteration limit', 140, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
     cmap: Param = EnumParam('Palette', 'magma', sorted(valid_cmaps))
@@ -43,7 +47,14 @@ class Viewer(AutoUIViewer):
         self.state = State()
         self.state_last = None
         self.curr_xform = np.eye(3)
+        self.cmap_cache = {}
         self.restart_rendering()
+
+    def get_cmap_cached(self):
+        if self.state.cmap not in self.cmap_cache:
+            self.cmap_cache[self.state.cmap] = \
+                torch.tensor(matplotlib.cm.get_cmap(self.state.cmap).colors, device=dev)
+        return self.cmap_cache[self.state.cmap]
 
     def restart_rendering(self):
         self.state_lock.acquire()
@@ -60,17 +71,15 @@ class Viewer(AutoUIViewer):
         # SoA-style data
         # Will be compacted as tasks finish
         self.curr_iter = 0
-        self.colormap = torch.tensor(matplotlib.cm.get_cmap(self.state.cmap).colors, device=dev)
-        self.posx = torch.arange(0, W, dtype=torch.int64, device=dev).tile(H)   # 0123-0123-0123...
+        self.posx = torch.arange(0, W, dtype=torch.int64, device=dev).tile(H) # 0123-0123-0123...
         self.posy = torch.arange(0, H, dtype=torch.int64, device=dev).repeat_interleave(W) # 0000-1111-2222...
         self.zr = cnv_tl[0] + cnv_w * self.posx / (W - 1)
         self.zi = cnv_tl[1] + cnv_h * self.posy / (H - 1)
-        self.image = torch.ones((H, W, 3), dtype=torch.float32, device=dev)
-        self.image *= self.color_LUT(self.state.max_iter) if self.state.invert else self.color_LUT(0)
+        self.counts = self.state.max_iter * torch.ones((H, W), dtype=torch.int32, device=dev)
         self.state_lock.release()
 
     def draw_toolbar(self):
-        imgui.text(f'Alive: {100*np.prod(self.zr.shape)/np.prod(self.image.shape[:2]):.2f}%')
+        imgui.text(f'Alive: {100*np.prod(self.zr.shape)/np.prod(self.counts.shape[:2]):.2f}%')
         if imgui.button('Restart'):
             self.restart_rendering()
 
@@ -104,16 +113,18 @@ class Viewer(AutoUIViewer):
                                 self.restart_rendering()
 
     # Lerped LUT
-    def color_LUT(self, i):
+    def color_LUT(self, i: torch.Tensor):
+        cmap = self.get_cmap_cached()
         tmin, tmax = self.state.cran
         t = i / self.state.max_iter
         t = t ** self.state.tpow
         t = tmin + t * (tmax - tmin) # use part of range?
-        t *= (len(self.colormap) - 1)
-        lo = int(np.floor(t))
-        hi = int(np.ceil(t))
-        t_fract = t - lo
-        return self.colormap[lo] * (1 - t_fract) + self.colormap[hi] * t_fract
+        t = t.clip(0, 1)
+        t *= (len(cmap) - 1)
+        lo = torch.floor(t).long()
+        hi = torch.ceil(t).long()
+        t_fract = (t - t.floor()).unsqueeze(-1)
+        return cmap[lo] * (1 - t_fract) + cmap[hi] * t_fract
 
     def compute(self):
         with self.state_lock:
@@ -121,14 +132,14 @@ class Viewer(AutoUIViewer):
 
     def process(self, s: State):
         if self.curr_iter >= s.max_iter:
-            return None # show previous image
+            return self.color_LUT(self.counts)
         
         # Escape condition: |z| > 2
         valid = (self.zr**2 + self.zi**2) <= 4
 
         # Keep updating colors of non-escaped elements
         idx = ~valid if s.invert else valid
-        self.image[self.posy[idx], self.posx[idx], :] = self.color_LUT(self.curr_iter)
+        self.counts[self.posy[idx], self.posx[idx]] = self.curr_iter
 
         # Compact arrays
         self.zr = self.zr[valid]
@@ -146,6 +157,6 @@ class Viewer(AutoUIViewer):
         self.curr_iter += 1
 
         # Return updated result
-        return self.image
+        return self.color_LUT(self.counts)
 
 viewer = Viewer('Julia viz')
