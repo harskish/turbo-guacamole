@@ -5,6 +5,7 @@ import torch
 import matplotlib.pyplot
 import matplotlib.cm
 from multiprocessing import Lock
+from typing import Tuple
 
 # MPS works poorly atm
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -27,6 +28,7 @@ presets = [
     (-0.5000, -0.5260, 600, [1.000, 1.000, 0.000, 0.000], (0.00, 1.00), 0.569, "twilight_shifted_r"),
     (-0.5000, -0.5180, 600, [1.000, 1.000, 0.000, 0.000], (0.00, 1.00), 0.569, "twilight_shifted_r"),
     (-0.5370, -0.5000, 218, [1.000, 1.000, 0.000, 0.000], (0.27, 1.00), 0.232, "twilight_r"),
+    (-0.4750, -0.6140, 140, [1.000, 1.000, 0.000, 0.000], (0.00, 1.00), 1.000, "Inigo Quilez", (0.50, 0.50, 0.50), (0.50, 0.50, 0.50), (1.00, 1.00, 1.00), (0.26, 0.42, 0.56)),
 ]
 
 @strict_dataclass
@@ -37,9 +39,15 @@ class State(ParamContainer):
     ci: Param = FloatParam('C_imag', -0.526, -1.1, 1.1)
     max_iter: Param = IntParam('Iteration limit', 140, 1, 1_000)
     invert: Param = BoolParam('Inverted drawing', True)
-    cmap: Param = EnumParam('Palette', 'magma', sorted(valid_cmaps))
+    cmap: Param = EnumParam('Palette', 'Inigo Quilez', ['Inigo Quilez'] + sorted(valid_cmaps))
     cran: Param = Float2Param('Color range', (0.0, 1.0), 0.0, 1.0, overlap=False)
     tpow: Param = FloatParam('Palette exponent', 1.0, 0.1, 3.0)
+    # Not automatically drawn
+    # For custom color map
+    cmap_a: Tuple[float] = (0.50, 0.50, 0.50)
+    cmap_b: Tuple[float] = (0.50, 0.50, 0.50)
+    cmap_c: Tuple[float] = (1.90, 1.00, 1.00)
+    cmap_d: Tuple[float] = (0.26, 0.42, 0.56)
 
 class Viewer(AutoUIViewer):
     def setup_state(self):
@@ -79,6 +87,12 @@ class Viewer(AutoUIViewer):
         self.state_lock.release()
 
     def draw_toolbar(self):
+        if self.state.cmap == 'Inigo Quilez':
+            self.state.cmap_a = imgui.core.drag_float3('cmap a (scale)', *self.state.cmap_a, change_speed=0.01, min_value=0.0, max_value=1.0)[1]
+            self.state.cmap_b = imgui.core.drag_float3('cmap b (bias)',  *self.state.cmap_b, change_speed=0.01, min_value=0.0, max_value=1.0)[1]
+            self.state.cmap_c = imgui.core.drag_float3('cmap c (freq.)', *self.state.cmap_c, change_speed=0.01, min_value=0.0, max_value=2.0)[1]
+            self.state.cmap_d = imgui.core.drag_float3('cmap d (phase)', *self.state.cmap_d, change_speed=0.01, min_value=0.0, max_value=1.0)[1]
+
         imgui.text(f'Alive: {100*np.prod(self.zr.shape)/np.prod(self.counts.shape[:2]):.2f}%')
         if imgui.button('Restart'):
             self.restart_rendering()
@@ -86,7 +100,11 @@ class Viewer(AutoUIViewer):
     def export_preset(self):
         s = self.state
         sx, sy, tx, ty = self.curr_xform.reshape(-1)[np.array([0, 4, 2, 5])]
-        print(f'({s.cr:.4f}, {s.ci:.4f}, {s.max_iter}, [{sx:.3f}, {sy:.3f}, {tx:.3f}, {ty:.3f}], ({s.cran[0]:.2f}, {s.cran[1]:.2f}), {s.tpow:.3f}, "{s.cmap}"),')
+        desc = f'{s.cr:.4f}, {s.ci:.4f}, {s.max_iter}, [{sx:.3f}, {sy:.3f}, {tx:.3f}, {ty:.3f}], ({s.cran[0]:.2f}, {s.cran[1]:.2f}), {s.tpow:.3f}, "{s.cmap}"'
+        if s.cmap == 'Inigo Quilez':
+            for p in [s.cmap_a, s.cmap_b, s.cmap_c, s.cmap_d]:
+                desc += f', ({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f})'
+        print(f'({desc}),')
 
     def load_preset(self, preset):
         with self.state_lock:
@@ -97,6 +115,11 @@ class Viewer(AutoUIViewer):
             s.cran = preset[4]
             s.tpow = preset[5]
             s.cmap = preset[6]
+            if s.cmap == 'Inigo Quilez':
+                s.cmap_a = preset[7]
+                s.cmap_b = preset[8]
+                s.cmap_c = preset[9]
+                s.cmap_d = preset[10]
 
     def draw_menu(self):
         with imgui.begin_menu('Presets', True) as file_menu:
@@ -114,17 +137,28 @@ class Viewer(AutoUIViewer):
 
     # Lerped LUT
     def color_LUT(self, i: torch.Tensor):
-        cmap = self.get_cmap_cached()
         tmin, tmax = self.state.cran
         t = i / self.state.max_iter
         t = t ** self.state.tpow
         t = tmin + t * (tmax - tmin) # use part of range?
         t = t.clip(0, 1)
+
+        if self.state.cmap == 'Inigo Quilez':
+            abcd = torch.tensor([self.state.cmap_a, self.state.cmap_b, self.state.cmap_c, self.state.cmap_d], dtype=torch.float32, device=dev)
+            return self.palette(t.unsqueeze(-1), *abcd.view(4, 1, 1, 3))
+
+        # Lerp
+        cmap = self.get_cmap_cached()
         t *= (len(cmap) - 1)
         lo = torch.floor(t).long()
         hi = torch.ceil(t).long()
         t_fract = (t - t.floor()).unsqueeze(-1)
         return cmap[lo] * (1 - t_fract) + cmap[hi] * t_fract
+
+    # Cosine based palette, 4 vec3 params
+    # iquilezles.org/articles/palettes/
+    def palette(self, t, a, b, c, d):
+        return a + b*torch.cos(2*np.pi*(c*t+d))
 
     def compute(self):
         with self.state_lock:
